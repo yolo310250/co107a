@@ -39,39 +39,38 @@ CHIP CPU {
         pc[15];          // address of next instruction
 
     PARTS:
-    // get type of instruction
-    Not(in=instruction[15], out=Ainstruction);
-    Not(in=Ainstruction, out=Cinstruction);
+    // Decoder
+    Or16(a=false, b=instruction, out[15]=isC,
+         out[12]=a, out[11]=c1, out[10]=c2, out[9]=c3, out[8]=c4, out[7]=c5, out[6]=c6, 
+         out[5]=d1, out[4]=d2, out[3]=d3, out[2]=j1, out[1]=j2, out[0]=j3);
+    // A register
+    Not(in=isC, out=isA);             // isA = not isC = not I15
+    And(a=isC, b=d1, out=AluToA);     // AluToA = isC & d1
+    Or(a=isA, b=AluToA, out=Aload);
     
-    And(a=Cinstruction, b=instruction[5], out=ALUtoA);    // C-inst and dest to A-reg?
-    Mux16(a=instruction, b=ALUout, sel=ALUtoA, out=Aregin);
-    
-    Or(a=Ainstruction, b=ALUtoA, out=loadA);    // load A if A-inst or C-inst&dest to A-reg
-    ARegister(in=Aregin, load=loadA, out=Aout);
-    
-    Mux16(a=Aout, b=inM, sel=instruction[12], out=AMout);   // select A or M based on a-bit
+    Mux16(a=instruction, b=ALUout, sel=isC, out=Ain);
 
-    And(a=Cinstruction, b=instruction[4], out=loadD);
-    DRegister(in=ALUout, load=loadD, out=Dout);    // load the D register from ALU
+    ARegister(in=Ain, load=Aload, out=Aout, out[0..14]=addressM);   // Aload = isA | (isC & d1),     addressM=Aout[0..14]
     
-    ALU(x=Dout, y=AMout, zx=instruction[11], nx=instruction[10], 
-        zy=instruction[9], ny=instruction[8], f=instruction[7],
-        no=instruction[6], out=ALUout, zr=ZRout, ng=NGout); // calculate
-        
-    // Set outputs for writing memory
-    Or16(a=false, b=Aout, out[0..14]=addressM);
-    Or16(a=false, b=ALUout, out=outM);
-    And(a=Cinstruction, b=instruction[3], out=writeM);
+    // D register
+    And(a=isC, b=d2, out=Dload);
+    DRegister(in=ALUout, load=Dload, out=Dout);  // Dload = isC & d2
     
-    // calc PCload & PCinc - whether to load PC with A reg
-    And(a=ZRout, b=instruction[1], out=jeq);    // is zero and jump if zero
-    And(a=NGout, b=instruction[2], out=jlt);    // is neg and jump if neg
-    Or(a=ZRout, b=NGout, out=zeroOrNeg);
-    Not(in=zeroOrNeg, out=positive);            // is positive (not zero and not neg)
-    And(a=positive, b=instruction[0], out=jgt); // is pos and jump if pos
-    Or(a=jeq, b=jlt, out=jle);
-    Or(a=jle, b=jgt, out=jumpToA);              // load PC if cond met and jump if cond
-    And(a=Cinstruction, b=jumpToA, out=PCload); // Only jump if C instruction
-    Not(in=PCload, out=PCinc);                  // only inc if not load
-    PC(in=Aout, inc=PCinc, load=PCload, reset=reset, out[0..14]=pc);
+    // ALU
+    Mux16(a=Aout, b=inM, sel=a, out=AorM);
+    ALU(x=Dout, y=AorM, zx=c1, nx=c2, zy=c3, ny=c4, f=c5, no=c6, out=ALUout, out=outM, zr=zr, ng=ng);
+
+    // JUMP condition
+    Or(a=ng, b=zr, out=ngzr);             // ngzr = (ng | zr)
+    Not(in=ngzr, out=gt);                  // g = out > 0 = !(ng | zr);  ng = (out < 0);  zr = (out = 0)
+    And(a=ng, b=j1, out=passLT);          // passLT = (ng & LT)
+    And(a=zr, b=j2, out=passEQ);          // passEQ = (zr & EQ)
+    And(a=gt, b=j3, out=passGT);          // passGT = (gt & GT)
+    Or(a=passLT, b=passEQ, out=passLE);
+    Or(a=passLE, b=passGT, out=pass);
+    And(a=isC, b=pass, out=PCload);       // PCload = isC & pass
+    PC(in=Aout, load=PCload, inc=true, reset=reset, out[0..14]=pc); // PCload = isC & ((ng&j1) | (zr&j2) | (!ng&!zr&j3))
+
+    // output
+    And(a=isC, b=d3, out=writeM);         // writeM = isC & d3
 }
